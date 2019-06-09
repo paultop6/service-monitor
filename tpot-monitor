@@ -1,0 +1,121 @@
+#!/opt/venvs/tpot-monitor/bin/python3.5
+import subprocess
+import os
+import sys
+import time
+import datetime
+import getpass
+import json
+from time import gmtime, strftime, localtime
+
+def Logger(string):
+	#print("%s : %s" % (strftime("%Y-%m-%d %H:%M:%S", localtime()), string))
+	print(string)
+	sys.stdout.flush()
+
+def callProcess(cmd, live_output=False, printcmd=False, curdir="/", valid_returncodes=[0,], root=False):
+	output = ""
+
+	if printcmd:
+		Info(cmd)
+
+	if root and getpass.getuser() != "root":
+			cmd = "sudo " + cmd
+
+	process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True, cwd=curdir)
+
+	if live_output:
+		for line in iter(process.stdout.readline, ''):
+			if len(line) > 0:
+				Logger(line.decode("ascii", "ignore").rstrip("\n"))
+				output = output + line.decode("ascii", "ignore")
+			else:
+				break
+
+		process.communicate()
+	else:
+		data   = process.communicate()
+		output = data[0].decode("utf-8")
+
+	if not process.returncode in valid_returncodes:
+		raise subprocess.CalledProcessError(process.returncode, cmd=cmd, output=output)
+
+	return output
+
+class Monitor:
+	def __init__(self, cmd):
+		self.cmd     = cmd
+		self.strikes = 0
+		self.pollCnt = 0
+
+	def poll(self):
+		output = callProcess(self.cmd)
+
+		if output.strip("\n").isdigit():
+			if int(output.strip("\n")) == 0:
+				self.strikes += 1
+			else:
+				self.strikes = 0
+
+# monitors = [
+# 		{
+# 			"name": "port 22 activity",
+# 			"monitor": Monitor("netstat -natu | egrep ':22.*ESTABLISHED' | wc -l"),
+# 			"freq": 300,
+# 			"strikes": 3
+# 		},
+# 		{
+# 			"name": "vbox service activity",
+# 			"monitor": Monitor("vboxmanage list runningvms | wc -l"),
+# 			"freq": 60,
+# 			"strikes": 5
+# 		}
+# 	]
+
+def main():
+	Logger("#######################")
+	Logger("### tpot-monitor.py ###")
+	Logger("#######################")
+
+	dMon     = dict()
+	monitors = list()
+
+	if not os.path.exists('/opt/tpot-monitor/tpot-monitor.json'):
+		print("File /opt/tpot-monitor/tpot-monitor.json does not exist")
+		sys.exit(1)
+
+	try:
+		with open('/opt/tpot-monitor/tpot-monitor.json') as f:
+			monitors = json.load(f)
+	except ValueError as e:
+		print("Unable to load Invalid json file /opt/tpot-monitor/tpot-monitor.json")
+		sys.exit(1)
+
+	for monitor in monitors:
+		monitor["monitor"] = Monitor(monitor["cmd"])
+
+	while True:
+		for monitor in monitors:
+			monitor["monitor"].pollCnt += 1
+
+			if monitor["monitor"].pollCnt == monitor["freq"]:
+				monitor["monitor"].poll()
+
+				monitor["monitor"].pollCnt = 0
+
+				if monitor["monitor"].strikes >= monitor["strikes"]:
+					Logger("monitor [%s], [%d] strikes, IDLE" % (monitor["name"], monitor["monitor"].strikes))
+				else:
+					Logger("monitor [%s], strikes[%d]" % (monitor["name"], monitor["monitor"].strikes))
+
+		idleCnt = len([x for x in monitors if x["monitor"].strikes >= x["strikes"]])
+
+		if idleCnt == len(monitors):
+			Logger("Idle, shutdown")
+			callProcess("shutdown -P now", root=True)
+
+		time.sleep(1)
+
+if __name__ == "__main__":
+	main()
+

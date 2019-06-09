@@ -1,0 +1,16 @@
+[Unit]
+Description=Tpot Service/Port Monitor
+ConditionPathExists=/usr/bin/tpot-monitor
+
+[Service]
+Type=simple
+User=nas
+WorkingDirectory=/usr/bin
+ExecStart=/usr/bin/tpot-monitor
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=tpot-monitor
+Restart=on-abort
+
+[Install]
+WantedBy=multi-user.target
